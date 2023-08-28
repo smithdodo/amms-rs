@@ -1,3 +1,4 @@
+use async_recursion::async_recursion;
 use ethers::{
     abi::{ParamType, Token},
     providers::Middleware,
@@ -74,7 +75,33 @@ pub async fn get_pairs_batch_request<M: Middleware>(
     Ok(pairs)
 }
 
+#[async_recursion]
 pub async fn get_amm_data_batch_request<M: Middleware>(
+    amms: &mut [AMM],
+    middleware: Arc<M>,
+) -> Result<(), AMMError<M>> {
+    if amms.is_empty() {
+        return Err(AMMError::EmptyAmmArrayError);
+    }
+
+    if let Err(e) = get_amm_data_batch_request_helper(amms, middleware.clone()).await {
+        let size = amms.len();
+        let mid = size / 2;
+
+        // TODO: migrate to tracing
+        println!("Batch request error: {:?}", e);
+        println!(
+            "Splitting batch request in half and trying again, size: {}",
+            mid
+        );
+
+        get_amm_data_batch_request(&mut amms[..mid], middleware.clone()).await?;
+        get_amm_data_batch_request(&mut amms[mid..], middleware.clone()).await?;
+    }
+
+    Ok(())
+}
+pub async fn get_amm_data_batch_request_helper<M: Middleware>(
     amms: &mut [AMM],
     middleware: Arc<M>,
 ) -> Result<(), AMMError<M>> {
@@ -83,6 +110,7 @@ pub async fn get_amm_data_batch_request<M: Middleware>(
         target_addresses.push(Token::Address(amm.address()));
     }
 
+    let amms_len = amms.len();
     let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
 
     let deployer = IGetUniswapV2PoolDataBatchRequest::deploy(middleware.clone(), constructor_args)?;
@@ -168,4 +196,37 @@ pub async fn get_v2_pool_data_batch_request<M: Middleware>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use ethers::providers::{Http, Provider};
+
+    use crate::sync::populate_amms;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test() -> eyre::Result<()> {
+        let client = Provider::<Http>::try_from("https://rpc.ankr.com/bsc")?;
+        let client = Arc::new(client);
+        let addr = "0x889BCE8239f777B36Cb80404d37eE72dF4351750"
+            .parse()
+            .unwrap();
+        let pool = UniswapV2Pool {
+            address: addr,
+            token_a: H160::zero(),
+            token_b: H160::zero(),
+            token_a_decimals: 0,
+            token_b_decimals: 0,
+            reserve_0: 0,
+            reserve_1: 0,
+            fee: 0,
+        };
+        let mut amms = (0..4)
+            .map(|_| AMM::UniswapV2Pool(pool.clone()))
+            .collect::<Vec<_>>();
+        populate_amms(&mut amms, 0, client.clone()).await?;
+        Ok(())
+    }
 }
