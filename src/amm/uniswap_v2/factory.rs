@@ -62,11 +62,17 @@ impl UniswapV2Factory {
         tracing::trace!(?pairs_length, factory = ?self.address, "getting all pairs of factory via batched calls");
 
         let mut pairs = vec![];
-        let step = U256::from(766); //max batch size for this call until codesize is too large
-
-        let mut idx_from = U256::from(start_pair_index.unwrap_or(0));
-        while idx_from < pairs_length {
-            let idx_to = std::cmp::min(idx_from + step, pairs_length);
+        let step = 766; //max batch size for this call until codesize is too large
+        let mut idx_from = match start_pair_index {
+            Some(idx) => U256::from(idx),
+            None => U256::zero(),
+        };
+        let next_step = step + start_pair_index.unwrap_or(0);
+        let mut idx_to = if next_step > pairs_length.as_usize() {
+            pairs_length
+        } else {
+            U256::from(next_step)
+        };
 
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
