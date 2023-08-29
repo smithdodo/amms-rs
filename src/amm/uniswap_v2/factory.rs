@@ -51,24 +51,21 @@ impl UniswapV2Factory {
         }
     }
 
-    pub async fn get_all_pairs_via_batched_calls<M: Middleware>(
+    pub async fn get_pairs_via_batched_calls<M: Middleware>(
         &self,
+        start_pair_index: Option<usize>,
         middleware: Arc<M>,
     ) -> Result<Vec<AMM>, AMMError<M>> {
         let factory = IUniswapV2Factory::new(self.address, middleware.clone());
-
-        let pairs_length: U256 = factory.all_pairs_length().call().await?;
+        let pairs_length = factory.all_pairs_length().call().await?;
 
         let mut pairs = vec![];
-        let step = 766; //max batch size for this call until codesize is too large
-        let mut idx_from = U256::zero();
-        let mut idx_to = if step > pairs_length.as_usize() {
-            pairs_length
-        } else {
-            U256::from(step)
-        };
+        let step = U256::from(766); //max batch size for this call until codesize is too large
 
-        for _ in (0..pairs_length.as_u128()).step_by(step) {
+        let mut idx_from = U256::from(start_pair_index.unwrap_or(0));
+        while idx_from < pairs_length {
+            let idx_to = std::cmp::min(idx_from + step, pairs_length);
+
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
                     self.address,
@@ -78,14 +75,7 @@ impl UniswapV2Factory {
                 )
                 .await?,
             );
-
             idx_from = idx_to;
-
-            if idx_to + step > pairs_length {
-                idx_to = pairs_length - 1
-            } else {
-                idx_to = idx_to + step;
-            }
         }
 
         let mut amms = vec![];
@@ -147,7 +137,7 @@ impl AutomatedMarketMakerFactory for UniswapV2Factory {
         middleware: Arc<M>,
         _step: u64,
     ) -> Result<Vec<AMM>, AMMError<M>> {
-        self.get_all_pairs_via_batched_calls(middleware).await
+        self.get_pairs_via_batched_calls(None, middleware).await
     }
 
     async fn populate_amm_data<M: Middleware>(
