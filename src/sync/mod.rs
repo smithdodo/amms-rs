@@ -9,7 +9,7 @@ use crate::{
 use ethers::providers::Middleware;
 
 use spinoff::{spinners, Color, Spinner};
-use std::{panic::resume_unwind, sync::Arc};
+use std::{panic::resume_unwind, sync::Arc, time::Instant};
 pub mod checkpoint;
 
 pub async fn sync_amms<M: 'static + Middleware>(
@@ -109,12 +109,23 @@ pub async fn populate_amms<M: Middleware>(
         match amms[0] {
             AMM::UniswapV2Pool(_) => {
                 let step = 127; //Max batch size for call
+                let mut populated = 0;
+                let total = amms.len();
                 for amm_chunk in amms.chunks_mut(step) {
+                    let start = Instant::now();
                     uniswap_v2::batch_request::get_amm_data_batch_request(
                         amm_chunk,
                         middleware.clone(),
                     )
                     .await?;
+
+                    populated += amm_chunk.len();
+                    println!(
+                        "Populated {}/{} pools in {:?}",
+                        populated,
+                        total,
+                        start.elapsed()
+                    );
                 }
             }
 
