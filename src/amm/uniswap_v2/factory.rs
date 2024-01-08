@@ -74,6 +74,7 @@ impl UniswapV2Factory {
             U256::from(next_step)
         };
 
+        for _ in (0..pairs_length.as_u128()).step_by(step) {
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
                     self.address,
@@ -83,7 +84,14 @@ impl UniswapV2Factory {
                 )
                 .await?,
             );
+
             idx_from = idx_to;
+
+            if idx_to + step > pairs_length {
+                idx_to = pairs_length - 1
+            } else {
+                idx_to = idx_to + step;
+            }
         }
 
         let mut amms = vec![];
