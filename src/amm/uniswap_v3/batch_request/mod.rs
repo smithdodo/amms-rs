@@ -203,9 +203,17 @@ pub async fn sync_v3_pool_batch_request<M: Middleware>(
     tracing::info!(?pool.address, "syncing pool");
     let constructor_args = Token::Tuple(vec![Token::Address(pool.address)]);
 
-    let deployer = ISyncUniswapV3PoolBatchRequest::deploy(middleware.clone(), constructor_args)?;
+    let return_data: Bytes;
+    if let Ok(deployer) =
+        ISyncUniswapV3PoolBatchRequest::deploy(middleware.clone(), constructor_args.clone())
+    {
+        return_data = deployer.call_raw().await?;
+    } else {
+        let deployer =
+            IGetUniswapV3PoolDataBatchRequest::deploy(middleware.clone(), constructor_args)?;
+        return_data = deployer.call_raw().await?;
+    };
 
-    let return_data: Bytes = deployer.call_raw().await?;
     let return_data_tokens = ethers::abi::decode(
         &[ParamType::Tuple(vec![
             ParamType::Uint(128), // liquidity
