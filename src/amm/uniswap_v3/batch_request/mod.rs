@@ -20,6 +20,8 @@ abigen!(
     "src/amm/uniswap_v3/batch_request/GetUniswapV3PoolDataBatchRequestABI.json";
     IGetUniswapV3TickDataBatchRequest,
     "src/amm/uniswap_v3/batch_request/GetUniswapV3TickDataBatchRequestABI.json";
+    IGetPancakeV3PoolDataBatchRequest,
+    "src/amm/uniswap_v3/batch_request/GetPancakeV3PoolDataBatchRequestABI.json";
     ISyncUniswapV3PoolBatchRequest,
     "src/amm/uniswap_v3/batch_request/SyncUniswapV3PoolBatchRequestABI.json";
 
@@ -49,13 +51,30 @@ pub async fn get_v3_pool_data_batch_request<M: Middleware>(
 ) -> Result<(), AMMError<M>> {
     let constructor_args = Token::Tuple(vec![Token::Array(vec![Token::Address(pool.address)])]);
 
-    let deployer = IGetUniswapV3PoolDataBatchRequest::deploy(middleware.clone(), constructor_args)?;
-
-    let return_data: Bytes = if let Some(block_number) = block_number {
-        deployer.block(block_number).call_raw().await?
+    let return_data: Bytes;
+    if let Ok(deployer) =
+        IGetPancakeV3PoolDataBatchRequest::deploy(middleware.clone(), constructor_args.clone())
+    {
+        return_data = if let Some(block_number) = block_number {
+            deployer.block(block_number).call_raw().await?
+        } else {
+            deployer.call_raw().await?
+        };
     } else {
-        deployer.call_raw().await?
+        let deployer =
+            IGetUniswapV3PoolDataBatchRequest::deploy(middleware.clone(), constructor_args)?;
+        return_data = if let Some(block_number) = block_number {
+            deployer.block(block_number).call_raw().await?
+        } else {
+            deployer.call_raw().await?
+        };
     };
+
+    // let return_data: Bytes = if let Some(block_number) = block_number {
+    //     deployer.block(block_number).call_raw().await?
+    // } else {
+    //     deployer.call_raw().await?
+    // };
 
     let return_data_tokens = ethers::abi::decode(
         &[ParamType::Array(Box::new(ParamType::Tuple(vec![
