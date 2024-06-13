@@ -24,6 +24,8 @@ abigen!(
     "src/amm/uniswap_v3/batch_request/GetPancakeV3PoolDataBatchRequestABI.json";
     ISyncUniswapV3PoolBatchRequest,
     "src/amm/uniswap_v3/batch_request/SyncUniswapV3PoolBatchRequestABI.json";
+    ISyncPancakeV3PoolBatchRequest,
+    "src/amm/uniswap_v3/batch_request/SyncPancakeV3PoolBatchRequestABI.json";
 
 );
 
