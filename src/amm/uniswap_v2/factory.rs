@@ -67,6 +67,10 @@ impl UniswapV2Factory {
             Some(idx) => U256::from(idx),
             None => U256::zero(),
         };
+        if idx_from >= pairs_length {
+            tracing::info!(?idx_from, ?pairs_length, factory=?self.address, "no new pairs to fetch");
+            return Ok(vec![]);
+        }
         let next_step = step + start_pair_index.unwrap_or(0);
         let mut idx_to = if next_step > pairs_length.as_usize() {
             pairs_length
@@ -74,7 +78,9 @@ impl UniswapV2Factory {
             U256::from(next_step)
         };
 
-        for _ in (0..pairs_length.as_u128()).step_by(step) {
+        tracing::debug!(?idx_from, ?idx_to, ?step, ?pairs_length, "fetching pairs");
+
+        for _ in (next_step..pairs_length.as_usize()).step_by(step) {
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
                     self.address,
@@ -87,7 +93,7 @@ impl UniswapV2Factory {
 
             idx_from = idx_to;
 
-            if idx_to + step > pairs_length {
+            if idx_to + step >= pairs_length {
                 idx_to = pairs_length - 1
             } else {
                 idx_to = idx_to + step;

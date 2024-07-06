@@ -41,16 +41,16 @@ fn populate_pool_data_from_tokens(
 pub async fn get_pairs_batch_request<M: Middleware>(
     factory: H160,
     from: U256,
-    step: U256,
+    mut to: U256,
     middleware: Arc<M>,
 ) -> Result<Vec<H160>, AMMError<M>> {
-    tracing::info!("getting pairs {}-{}", from, step);
+    tracing::info!("getting pairs from {}, to: {}", from, to);
 
     let mut pairs = vec![];
 
     let constructor_args = Token::Tuple(vec![
         Token::Uint(from),
-        Token::Uint(step),
+        Token::Uint(to),
         Token::Address(factory),
     ]);
 
