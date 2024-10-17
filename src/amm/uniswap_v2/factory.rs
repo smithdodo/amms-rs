@@ -16,7 +16,7 @@ use crate::{
     errors::AMMError,
 };
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
+use tracing::{debug, info, instrument, warn};
 
 use super::{batch_request, UniswapV2Pool, U256_1};
 
@@ -47,10 +47,22 @@ impl UniswapV2Factory {
             fee,
         }
     }
-
     pub async fn get_all_pairs_via_batched_calls<T, N, P>(
         &self,
         provider: Arc<P>,
+    ) -> Result<Vec<AMM>, AMMError>
+    where
+        T: Transport + Clone,
+        N: Network,
+        P: Provider<T, N>,
+    {
+        self.get_pairs_via_batched_calls(provider, U256::ZERO).await
+    }
+
+    pub async fn get_pairs_via_batched_calls<T, N, P>(
+        &self,
+        provider: Arc<P>,
+        idx_from: U256,
     ) -> Result<Vec<AMM>, AMMError>
     where
         T: Transport + Clone,
@@ -66,14 +78,32 @@ impl UniswapV2Factory {
         let mut pairs = vec![];
         // NOTE: max batch size for this call until codesize is too large
         let step = 766;
-        let mut idx_from = U256::ZERO;
+        let mut idx_from = idx_from;
         let mut idx_to = if step > pairs_length.to::<usize>() {
             pairs_length
         } else {
             U256::from(step)
         };
 
-        for _ in (0..pairs_length.to::<usize>()).step_by(step) {
+        let num_pairs_to_fetch = pairs_length.to::<i32>() - idx_from.to::<i32>();
+        if num_pairs_to_fetch > 0 {
+            info!(
+                factory = ?self.address,
+                total_pairs = ?pairs_length,
+                num_pairs_to_fetch = ?num_pairs_to_fetch,
+                "Getting all pairs starting from {idx_from}"
+            );
+        } else {
+            warn!(
+                factory = ?self.address,
+                idx_from = ?idx_from,
+                pairs_length = ?pairs_length,
+                "No pairs to fetch, returning empty list"
+            );
+            return Ok(vec![]);
+        }
+
+        for _ in (idx_from.to::<usize>()..pairs_length.to::<usize>()).step_by(step) {
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
                     self.address,
@@ -127,7 +157,13 @@ impl AutomatedMarketMakerFactory for UniswapV2Factory {
     {
         let pair_created_event = IUniswapV2Factory::PairCreated::decode_log(log.as_ref(), true)?;
         Ok(AMM::UniswapV2Pool(
-            UniswapV2Pool::new_from_address(pair_created_event.pair, Some(log.address()), self.fee, provider).await?,
+            UniswapV2Pool::new_from_address(
+                pair_created_event.pair,
+                Some(log.address()),
+                self.fee,
+                provider,
+            )
+            .await?,
         ))
     }
 
