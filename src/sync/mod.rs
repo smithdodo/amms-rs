@@ -121,6 +121,8 @@ where
     P: Provider<T, N> + Clone,
 {
     if amms_are_congruent(amms) {
+        let total_amms = amms.len();
+        let mut synced_amms = 0;
         match amms[0] {
             AMM::UniswapV2Pool(_) => {
                 // Max batch size for call
@@ -131,6 +133,15 @@ where
                         provider.clone(),
                     )
                     .await?;
+                    synced_amms += amm_chunk.len();
+                    tracing::info!(
+                        amm_type = "UniswapV2",
+                        job_size = total_amms,
+                        chunk_size = amm_chunk.len(),
+                        synced = synced_amms,
+                        progress = %format!("{:.2}%", (synced_amms as f64 / total_amms as f64) * 100.0),
+                        "Synced AMMs chunk",
+                    );
                 }
             }
 
