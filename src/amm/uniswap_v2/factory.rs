@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use alloy::{
     network::Network,
     primitives::{Address, B256, U256},
@@ -54,7 +56,8 @@ impl UniswapV2Factory {
         N: Network,
         P: Provider<T, N> + Clone,
     {
-        self.get_pairs_via_batched_calls(provider, U256::ZERO).await
+        self.get_pairs_via_batched_calls(Arc::new(provider), U256::ZERO)
+            .await
     }
 
     pub async fn get_pairs_via_batched_calls<T, N, P>(
@@ -65,7 +68,7 @@ impl UniswapV2Factory {
     where
         T: Transport + Clone,
         N: Network,
-        P: Provider<T, N>,
+        P: Provider<T, N> + Clone,
     {
         let factory = IUniswapV2Factory::new(self.address, provider.clone());
 
@@ -77,10 +80,10 @@ impl UniswapV2Factory {
         // NOTE: max batch size for this call until codesize is too large
         let step = 766;
         let mut idx_from = idx_from;
-        let mut idx_to = if step > pairs_length.to::<usize>() {
+        let mut idx_to = if idx_from.to::<usize>() + step > pairs_length.to::<usize>() {
             pairs_length
         } else {
-            U256::from(step)
+            U256::from(idx_from.to::<usize>() + step)
         };
 
         let num_pairs_to_fetch = pairs_length.to::<i32>() - idx_from.to::<i32>();
@@ -102,6 +105,10 @@ impl UniswapV2Factory {
         }
 
         for _ in (idx_from.to::<usize>()..pairs_length.to::<usize>()).step_by(step) {
+            println!(
+                "fetching pairs from idx_from: {:?}, idx_to: {:?}",
+                idx_from, idx_to
+            );
             pairs.append(
                 &mut batch_request::get_pairs_batch_request(
                     self.address,
