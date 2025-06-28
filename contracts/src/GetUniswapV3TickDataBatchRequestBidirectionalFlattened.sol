@@ -20,220 +20,6 @@ pragma solidity ^0.8.0;
  * such as liquidity analysis, price range determination, or pool state inspection.
  */
 
-import {console2 as console} from "forge-std/console2.sol";
-
-contract GetUniswapV3TickDataBatchRequestBidirectional {
-    int24 internal constant MIN_TICK = -887272;
-    int24 internal constant MAX_TICK = -MIN_TICK;
-
-    struct TickData {
-        bool initialized;
-        int24 tick;
-        int128 liquidityNet;
-    }
-
-    constructor(
-        address pool,
-        int24 currentTick,
-        uint16 numTicksInEachDirection,
-        int24 tickSpacing
-    ) {
-        address token0 = IUniswapV3PoolState(pool).token0();
-        address token1 = IUniswapV3PoolState(pool).token1();
-        
-        // Return empty array if either token balance is zero
-        if (!tokenBalanceGtZero(token0, pool) || !tokenBalanceGtZero(token1, pool)) {
-            TickData[] memory emptyTickData = new TickData[](0);
-            bytes memory abiEncodedData = abi.encode(emptyTickData, block.number);
-            
-            assembly {
-                let dataStart := add(abiEncodedData, 0x20)
-                return(dataStart, sub(msize(), dataStart))
-            }
-            return;
-        }
-
-        TickData[] memory tickDataLower = getInitializedTicks(pool, currentTick, numTicksInEachDirection, tickSpacing, true);
-        console.log("===========");
-        TickData[] memory tickDataUpper = getInitializedTicks(pool, currentTick, numTicksInEachDirection, tickSpacing, false);
-
-        uint totalTicks = numTicksInEachDirection * 2 ;
-        TickData[] memory tickData = new TickData[](totalTicks);
-        for (uint i = 0; i < numTicksInEachDirection; i++) {
-            if (tickDataLower[i].initialized) {
-                tickData[i] = tickDataLower[i];
-            }
-        }
-        for (uint i = 0; i < numTicksInEachDirection; i++) {
-            if (tickDataUpper[i].initialized) {
-                tickData[i + numTicksInEachDirection] = tickDataUpper[i];
-            }
-        }
-
-        // ensure abi encoding, not needed here but increase reusability for different return types
-        // note: abi.encode add a first 32 bytes word with the address of the original data
-        bytes memory abiEncodedData = abi.encode(tickData, block.number);
-
-        assembly {
-            // Return from the start of the data (discarding the original data address)
-            // up to the end of the memory used
-            let dataStart := add(abiEncodedData, 0x20)
-            return(dataStart, sub(msize(), dataStart))
-        }
-    }
-
-    function tokenBalanceGtZero(address token, address pool) internal view returns (bool) {
-        uint256 balance = IERC20(token).balanceOf(pool);
-        console.log("token", token);
-        console.log("balance", balance);
-        return balance > 1;
-    }
-
-    function getInitializedTicks(address pool, int24 currentTick, uint16 maxTicks, int24 tickSpacing, bool zeroForOne)
-        internal
-        view
-        returns (TickData[] memory tickData)
-    {
-        tickData = new TickData[](maxTicks);
-
-        (uint128 liquidityGross, , , , , , , ) = IUniswapV3PoolState(pool).ticks(currentTick);
-        int128 liquidity = int128(liquidityGross);
-
-        //Instantiate current word position to keep track of the word count
-        uint256 counter = 0;
-
-       uint256 loopCount = 0;
-    //    uint256 maxLoopCount = (3470 + uint256(uint24(tickSpacing*10))) / uint256(uint24(tickSpacing));
-
-        while (loopCount < 4000 && counter < maxTicks) {
-            loopCount++;
-            if (loopCount % 100 == 0) {
-                // console.log("loopCount", loopCount);
-            }
-
-
-            (
-                int24 nextTick,
-                bool initialized
-            ) = nextInitializedTickWithinOneWord(
-                    pool,
-                    currentTick,
-                    tickSpacing,
-                    zeroForOne
-                );
-            
-            if (nextTick <= MIN_TICK || nextTick >= MAX_TICK) {
-                // console.logInt(nextTick);
-                break;
-            }
-
-            //Set the current tick to the next tick and repeat
-            currentTick = zeroForOne ? nextTick - 1 : nextTick;
-
-            //Make sure the next tick is initialized
-            (, int128 liquidityNet, , , , , , ) = IUniswapV3PoolState(pool)
-                .ticks(nextTick);
-
-            if (liquidityNet == 0) {
-                continue;
-            }
-
-            console.log("found initialized tick" );
-            console.logInt(nextTick);
-
-            if (zeroForOne) {
-                liquidity -= liquidityNet;
-            } else {
-                liquidity += liquidityNet;
-            }
-
-            //Make sure not to overshoot the max/min tick
-            //If we do, break the loop, and set the last initialized tick to the max/min tick=
-            if (nextTick < MIN_TICK) {
-                nextTick = MIN_TICK;
-                // tickData[counter].initialized = initialized;
-                // tickData[counter].tick = nextTick;
-                // tickData[counter].liquidityNet = liquidityNet;
-                break;
-            } else if (nextTick > MAX_TICK) {
-                nextTick = MIN_TICK;
-                // tickData[counter].initialized = initialized;
-                // tickData[counter].tick = nextTick;
-                // tickData[counter].liquidityNet = liquidityNet;
-                break;
-            } else {
-                tickData[counter].initialized = initialized;
-                tickData[counter].tick = nextTick;
-                tickData[counter].liquidityNet = liquidityNet;
-            }
-
-            counter++;
-        }
-    }
-
-    function position(int24 tick)
-        private
-        pure
-        returns (int16 wordPos, uint8 bitPos)
-    {
-        unchecked {
-            wordPos = int16(tick >> 8);
-            bitPos = uint8(int8(tick % 256));
-        }
-    }
-
-    function nextInitializedTickWithinOneWord(
-        address pool,
-        int24 tick,
-        int24 tickSpacing,
-        bool lte
-    ) internal view returns (int24 next, bool initialized) {
-        unchecked {
-            int24 compressed = tick / tickSpacing;
-            if (tick < 0 && tick % tickSpacing != 0) compressed--; // round towards negative infinity
-
-            if (lte) {
-                (int16 wordPos, uint8 bitPos) = position(compressed);
-
-                // all the 1s at or to the right of the current bitPos
-                uint256 mask = (1 << bitPos) - 1 + (1 << bitPos);
-                uint256 masked = IUniswapV3PoolState(pool).tickBitmap(wordPos) &
-                    mask;
-
-                // if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
-                initialized = masked != 0;
-                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
-                next = initialized
-                    ? (compressed -
-                        int24(
-                            uint24(bitPos - BitMath.mostSignificantBit(masked))
-                        )) * tickSpacing
-                    : (compressed - int24(uint24(bitPos))) * tickSpacing;
-            } else {
-                // start from the word of the next tick, since the current tick state doesn't matter
-                (int16 wordPos, uint8 bitPos) = position(compressed + 1);
-                // all the 1s at or to the left of the bitPos
-                uint256 mask = ~((1 << bitPos) - 1);
-                uint256 masked = IUniswapV3PoolState(pool).tickBitmap(wordPos) &
-                    mask;
-
-                // if there are no initialized ticks to the left of the current tick, return leftmost in the word
-                initialized = masked != 0;
-                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
-                next = initialized
-                    ? (compressed +
-                        1 +
-                        int24(
-                            uint24(BitMath.leastSignificantBit(masked) - bitPos)
-                        )) * tickSpacing
-                    : (compressed +
-                        1 +
-                        int24(uint24(type(uint8).max - bitPos))) * tickSpacing;
-            }
-        }
-    }
-}
-
 /// @title BitMath
 /// @dev This library provides functionality for computing bit properties of an unsigned integer
 library BitMath {
@@ -357,4 +143,198 @@ interface IUniswapV3PoolState {
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
+}
+
+contract GetUniswapV3TickDataBatchRequestBidirectional {
+    int24 internal constant MIN_TICK = -887272;
+    int24 internal constant MAX_TICK = -MIN_TICK;
+
+    struct TickData {
+        bool initialized;
+        int24 tick;
+        int128 liquidityNet;
+    }
+
+    constructor(
+        address pool,
+        int24 currentTick,
+        uint16 numTicksInEachDirection,
+        int24 tickSpacing
+    ) {
+        address token0 = IUniswapV3PoolState(pool).token0();
+        address token1 = IUniswapV3PoolState(pool).token1();
+        
+        // Return empty array if either token balance is zero
+        if (!tokenBalanceGtZero(token0, pool) || !tokenBalanceGtZero(token1, pool)) {
+            TickData[] memory emptyTickData = new TickData[](0);
+            bytes memory abiEncodedData = abi.encode(emptyTickData, block.number);
+            
+            assembly {
+                let dataStart := add(abiEncodedData, 0x20)
+                return(dataStart, sub(msize(), dataStart))
+            }
+            return;
+        }
+
+        TickData[] memory tickDataLower = getInitializedTicks(pool, currentTick, numTicksInEachDirection, tickSpacing, true);
+        TickData[] memory tickDataUpper = getInitializedTicks(pool, currentTick, numTicksInEachDirection, tickSpacing, false);
+
+        uint totalTicks = numTicksInEachDirection * 2 ;
+        TickData[] memory tickData = new TickData[](totalTicks);
+        for (uint i = 0; i < numTicksInEachDirection; i++) {
+            if (tickDataLower[i].initialized) {
+                tickData[i] = tickDataLower[i];
+            }
+        }
+        for (uint i = 0; i < numTicksInEachDirection; i++) {
+            if (tickDataUpper[i].initialized) {
+                tickData[i + numTicksInEachDirection] = tickDataUpper[i];
+            }
+        }
+
+        // ensure abi encoding, not needed here but increase reusability for different return types
+        // note: abi.encode add a first 32 bytes word with the address of the original data
+        bytes memory abiEncodedData = abi.encode(tickData, block.number);
+
+        assembly {
+            // Return from the start of the data (discarding the original data address)
+            // up to the end of the memory used
+            let dataStart := add(abiEncodedData, 0x20)
+            return(dataStart, sub(msize(), dataStart))
+        }
+    }
+
+    function tokenBalanceGtZero(address token, address pool) internal view returns (bool) {
+        uint256 balance = IERC20(token).balanceOf(pool);
+        return balance > 1;
+    }
+
+    function getInitializedTicks(address pool, int24 currentTick, uint16 maxTicks, int24 tickSpacing, bool zeroForOne)
+        internal
+        view
+        returns (TickData[] memory tickData)
+    {
+        tickData = new TickData[](maxTicks);
+
+        (uint128 liquidityGross, , , , , , , ) = IUniswapV3PoolState(pool).ticks(currentTick);
+        int128 liquidity = int128(liquidityGross);
+
+        //Instantiate current word position to keep track of the word count
+        uint256 counter = 0;
+
+       uint256 loopCount = 0;
+
+        while (loopCount < 4000 && counter < maxTicks) {
+            loopCount++;
+
+            (
+                int24 nextTick,
+                bool initialized
+            ) = nextInitializedTickWithinOneWord(
+                    pool,
+                    currentTick,
+                    tickSpacing,
+                    zeroForOne
+                );
+            
+            if (nextTick <= MIN_TICK || nextTick >= MAX_TICK) {
+                break;
+            }
+
+            //Set the current tick to the next tick and repeat
+            currentTick = zeroForOne ? nextTick - 1 : nextTick;
+
+            //Make sure the next tick is initialized
+            (, int128 liquidityNet, , , , , , ) = IUniswapV3PoolState(pool)
+                .ticks(nextTick);
+
+            if (liquidityNet == 0) {
+                continue;
+            }
+
+            if (zeroForOne) {
+                liquidity -= liquidityNet;
+            } else {
+                liquidity += liquidityNet;
+            }
+
+            //Make sure not to overshoot the max/min tick
+            //If we do, break the loop, and set the last initialized tick to the max/min tick=
+            if (nextTick < MIN_TICK) {
+                nextTick = MIN_TICK;
+                break;
+            } else if (nextTick > MAX_TICK) {
+                nextTick = MIN_TICK;
+                break;
+            } else {
+                tickData[counter].initialized = initialized;
+                tickData[counter].tick = nextTick;
+                tickData[counter].liquidityNet = liquidityNet;
+            }
+
+            counter++;
+        }
+    }
+
+    function position(int24 tick)
+        private
+        pure
+        returns (int16 wordPos, uint8 bitPos)
+    {
+        unchecked {
+            wordPos = int16(tick >> 8);
+            bitPos = uint8(int8(tick % 256));
+        }
+    }
+
+    function nextInitializedTickWithinOneWord(
+        address pool,
+        int24 tick,
+        int24 tickSpacing,
+        bool lte
+    ) internal view returns (int24 next, bool initialized) {
+        unchecked {
+            int24 compressed = tick / tickSpacing;
+            if (tick < 0 && tick % tickSpacing != 0) compressed--; // round towards negative infinity
+
+            if (lte) {
+                (int16 wordPos, uint8 bitPos) = position(compressed);
+
+                // all the 1s at or to the right of the current bitPos
+                uint256 mask = (1 << bitPos) - 1 + (1 << bitPos);
+                uint256 masked = IUniswapV3PoolState(pool).tickBitmap(wordPos) &
+                    mask;
+
+                // if there are no initialized ticks to the right of or at the current tick, return rightmost in the word
+                initialized = masked != 0;
+                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
+                next = initialized
+                    ? (compressed -
+                        int24(
+                            uint24(bitPos - BitMath.mostSignificantBit(masked))
+                        )) * tickSpacing
+                    : (compressed - int24(uint24(bitPos))) * tickSpacing;
+            } else {
+                // start from the word of the next tick, since the current tick state doesn't matter
+                (int16 wordPos, uint8 bitPos) = position(compressed + 1);
+                // all the 1s at or to the left of the bitPos
+                uint256 mask = ~((1 << bitPos) - 1);
+                uint256 masked = IUniswapV3PoolState(pool).tickBitmap(wordPos) &
+                    mask;
+
+                // if there are no initialized ticks to the left of the current tick, return leftmost in the word
+                initialized = masked != 0;
+                // overflow/underflow is possible, but prevented externally by limiting both tickSpacing and tick
+                next = initialized
+                    ? (compressed +
+                        1 +
+                        int24(
+                            uint24(BitMath.leastSignificantBit(masked) - bitPos)
+                        )) * tickSpacing
+                    : (compressed +
+                        1 +
+                        int24(uint24(type(uint8).max - bitPos))) * tickSpacing;
+            }
+        }
+    }
 }

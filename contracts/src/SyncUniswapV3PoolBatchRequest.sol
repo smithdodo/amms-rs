@@ -24,12 +24,7 @@ interface IUniswapV3Pool {
         view
         returns (
             uint160 sqrtPriceX96,
-            int24 tick,
-            uint16 observationIndex,
-            uint16 observationCardinality,
-            uint16 observationCardinalityNext,
-            uint8 feeProtocol,
-            bool unlocked
+            int24 tick
         );
 
     function ticks(int24 tick)
@@ -72,7 +67,7 @@ contract SyncUniswapV3PoolBatchRequest {
 
             PoolData memory poolData;
 
-            (uint160 sqrtPriceX96, int24 tick, , , , , ) = IUniswapV3Pool(
+            (uint160 sqrtPriceX96, int24 tick) = IUniswapV3Pool(
                 poolAddress
             ).slot0();
 

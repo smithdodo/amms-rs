@@ -1,6 +1,8 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+// import "forge-std/console.sol";
+
 interface IUniswapV3Pool {
     function token0() external view returns (address);
 
@@ -17,12 +19,7 @@ interface IUniswapV3Pool {
         view
         returns (
             uint160 sqrtPriceX96,
-            int24 tick,
-            uint16 observationIndex,
-            uint16 observationCardinality,
-            uint16 observationCardinalityNext,
-            uint8 feeProtocol,
-            bool unlocked
+            int24 tick
         );
 
     function ticks(int24 tick)
@@ -121,7 +118,7 @@ contract GetUniswapV3PoolDataBatchRequest {
                 continue;
             }
 
-            (uint160 sqrtPriceX96, int24 tick,,,,,) = IUniswapV3Pool(poolAddress).slot0();
+            (uint160 sqrtPriceX96, int24 tick) = IUniswapV3Pool(poolAddress).slot0();
 
             (, int128 liquidityNet,,,,,,) = IUniswapV3Pool(poolAddress).ticks(tick);
 
@@ -138,6 +135,7 @@ contract GetUniswapV3PoolDataBatchRequest {
         }
 
         bytes memory _abiEncodedData = abi.encode(allPoolData);
+        // console.logBytes(_abiEncodedData);
         assembly {
             // Return from the start of the data (discarding the original data address)
             // up to the end of the memory used
